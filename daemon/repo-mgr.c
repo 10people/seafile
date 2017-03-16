@@ -1084,6 +1084,7 @@ seaf_repo_manager_is_ignored_hidden_file (const char *filename)
     return FALSE;
 }
 
+#ifdef WIN32
 static inline gboolean
 has_trailing_space_or_period (const char *path)
 {
@@ -1094,6 +1095,7 @@ has_trailing_space_or_period (const char *path)
 
     return FALSE;
 }
+#endif
 
 typedef enum IgnoreReason {
     IGNORE_REASON_END_SPACE_PERIOD = 0,
@@ -1305,17 +1307,20 @@ add_file (const char *repo_id,
                                                   path,
                                                   S_IFREG,
                                                   SYNC_STATUS_SYNCED);
-        }
-        if (added && options && options->changeset) {
-            /* ce may be updated. */
-            ce = index_name_exists (istate, path, strlen(path), 0);
-            add_to_changeset (options->changeset,
-                              DIFF_STATUS_ADDED,
-                              ce->sha1,
-                              st,
-                              modifier,
-                              path,
-                              NULL);
+        } else {
+            if (total_size)
+                *total_size += (gint64)(st->st_size);
+            if (options && options->changeset) {
+                /* ce may be updated. */
+                ce = index_name_exists (istate, path, strlen(path), 0);
+                add_to_changeset (options->changeset,
+                                  DIFF_STATUS_ADDED,
+                                  ce->sha1,
+                                  st,
+                                  modifier,
+                                  path,
+                                  NULL);
+            }
         }
     } else if (*remain_files == NULL) {
         ret = add_to_index (repo_id, version, istate, path, full_path,
@@ -2139,8 +2144,6 @@ add_path_to_index (SeafRepo *repo, struct index_state *istate,
                    GList **scanned_dirs, gint64 *total_size, GQueue **remain_files,
                    LockedFileSet *fset)
 {
-    SeafStat st;
-
     /* If we've recursively scanned the parent directory, don't need to scan
      * any files under it any more.
      */
@@ -3138,7 +3141,8 @@ static void
 handle_rename (SeafRepo *repo, struct index_state *istate,
                SeafileCrypt *crypt, GList *ignore_list,
                LockedFileSet *fset,
-               WTEvent *event, GList **scanned_del_dirs)
+               WTEvent *event, GList **scanned_del_dirs,
+               gint64 *total_size)
 {
     gboolean not_found, src_ignored, dst_ignored;
 
@@ -3247,7 +3251,7 @@ handle_rename (SeafRepo *repo, struct index_state *istate,
     add_recursive (repo->id, repo->version, repo->email,
                    istate, repo->worktree, event->new_path,
                    crypt, FALSE, ignore_list,
-                   NULL, NULL, &options);
+                   total_size, NULL, &options);
 }
 
 #ifdef WIN32
@@ -3705,7 +3709,7 @@ apply_worktree_changes_to_index (SeafRepo *repo, struct index_state *istate,
             }
             break;
         case WT_EVENT_RENAME:
-            handle_rename (repo, istate, crypt, ignore_list, fset, event, &scanned_del_dirs);
+            handle_rename (repo, istate, crypt, ignore_list, fset, event, &scanned_del_dirs, &total_size);
             break;
         case WT_EVENT_ATTRIB:
             if (!is_path_writable(repo->id,
@@ -4166,13 +4170,6 @@ print_index (struct index_state *istate)
     return 0;
 }
 #endif
-
-static inline void
-print_time (const char *desc, GTimeVal *s, GTimeVal *e)
-{
-    seaf_message ("%s: %lu\n", desc,
-                  (e->tv_sec*G_USEC_PER_SEC+e->tv_usec - (s->tv_sec*G_USEC_PER_SEC+s->tv_usec))/1000);
-}
 
 char *
 seaf_repo_index_commit (SeafRepo *repo, const char *desc,
@@ -7483,18 +7480,6 @@ save_repo_property (SeafRepoManager *manager,
     }
 
     pthread_mutex_unlock (&manager->priv->db_lock);
-}
-
-inline static gboolean is_peer_relay (const char *peer_id)
-{
-    CcnetPeer *peer = ccnet_get_peer(seaf->ccnetrpc_client, peer_id);
-
-    if (!peer)
-        return FALSE;
-
-    gboolean is_relay = string_list_is_exists(peer->role_list, "MyRelay");
-    g_object_unref (peer);
-    return is_relay;
 }
 
 int
